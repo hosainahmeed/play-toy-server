@@ -1,6 +1,8 @@
 require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
+const jwt = require('jsonwebtoken')
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb')
 
 const app = express()
@@ -8,7 +10,30 @@ const port = process.env.PORT || 5000
 
 // Middleware
 app.use(express.json())
-app.use(cors())
+app.use(
+  cors({
+    origin: ['http://localhost:5173'],
+    credentials: true
+  })
+)
+
+const authenticateUser = (req, res, next) => {
+  const token =
+    req.headers.authorization && req.headers.authorization.split(' ')[1]
+
+  if (!token) {
+    return res.status(401).send({ message: 'Unauthorized: No token provided' })
+  }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: 'Unauthorized: Invalid token' })
+    }
+
+    req.user = decoded
+    next()
+  })
+}
 
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.adkk5.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`
 
@@ -32,9 +57,64 @@ async function run () {
     const toysWishListCollection = client.db('Toys').collection('wishList')
     const toysCartCollection = client.db('Toys').collection('cart')
     const toysBlogsCollection = client.db('Toys').collection('blogs')
+    const toysPaymentCollection = client.db('Toys').collection('payment')
+    const userCollection = client.db('Toys').collection('users')
+
+    app.post('/jwt', async (req, res) => {
+      try {
+        const user = req.body
+        const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+          expiresIn: '3d'
+        })
+        const cookieOptions = {
+          httpOnly: true,
+          secure: false
+        }
+        res
+          .cookie('token', token, cookieOptions)
+          .status(200)
+          .send({ success: true, message: 'JWT token issued' })
+      } catch (error) {
+        console.error('Error generating JWT:', error)
+        res
+          .status(500)
+          .send({ success: false, message: 'Failed to issue JWT token' })
+      }
+    })
+
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded.email
+      const query = { email: email }
+      const user = await userCollection.findOne(query)
+      if (user?.role !== 'admin') {
+        return res
+          .status(403)
+          .send({ error: true, message: 'forbidden message' })
+      }
+      next()
+    }
 
     app.get('/', (req, res) => {
       res.send('welcome')
+    })
+
+    app.get('/users', async (req, res) => {
+      const result = await userCollection.find().toArray()
+      res.send(result)
+    })
+
+    app.get('/users/admin/:email', async (req, res) => {
+      const email = req.params.email
+      if (email !== req.decoded.email) {
+        return res.status(403).send({ message: 'forbidden access' })
+      }
+      const query = { email: email }
+      const user = await userCollection.findOne(query)
+      let admin = false
+      if (user) {
+        admin = user?.role === 'admin'
+      }
+      res.send({ admin })
     })
 
     app.get('/reviews', async (req, res) => {
@@ -218,6 +298,52 @@ async function run () {
           .status(500)
           .send({ error: 'An error occurred while fetching reviews.' })
       }
+    })
+
+    app.post('/create-payment-intent', async (req, res) => {
+      const { price } = req.body
+      const amount = Math.round(price * 100)
+
+      if (amount < 50) {
+        return res.status(400).send({
+          error: 'The amount must be at least $0.50'
+        })
+      }
+
+      try {
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount: amount,
+          currency: 'usd',
+          payment_method_types: ['card']
+        })
+
+        res.send({
+          clientSecret: paymentIntent.client_secret
+        })
+      } catch (error) {
+        console.error('Error creating payment intent:', error)
+        res.status(500).send({
+          error: 'Failed to create payment intent'
+        })
+      }
+    })
+
+    app.get('/payments/:email', async (req, res) => {
+      const query = { email: req.params.email }
+      const result = await toysPaymentCollection.find(query).toArray()
+      res.send(result)
+    })
+
+    app.post('/payments', async (req, res) => {
+      const payment = req.body
+      const paymentResult = await toysPaymentCollection.insertOne(payment)
+      const query = {
+        _id: {
+          $in: payment.cartIds.map(id => new ObjectId(id))
+        }
+      }
+      const deleteResult = await toysCartCollection.deleteMany(query)
+      res.send({ paymentResult, deleteResult })
     })
   } finally {
     // await client.close();
