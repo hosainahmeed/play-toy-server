@@ -2,6 +2,7 @@ require('dotenv').config()
 const express = require('express')
 const cors = require('cors')
 const jwt = require('jsonwebtoken')
+const cookieParser = require('cookie-parser')
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb')
 
@@ -9,28 +10,26 @@ const app = express()
 const port = process.env.PORT || 5000
 
 // Middleware
-app.use(express.json())
 app.use(
   cors({
     origin: ['http://localhost:5173'],
     credentials: true
   })
 )
+app.use(express.json())
+app.use(cookieParser())
 
-const authenticateUser = (req, res, next) => {
-  const token =
-    req.headers.authorization && req.headers.authorization.split(' ')[1]
-
+const verifyToken = (req, res, next) => {
+  const token = req?.cookies?.token
   if (!token) {
-    return res.status(401).send({ message: 'Unauthorized: No token provided' })
+    return res.status(401).send({ message: 'unauthorized access' })
   }
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
     if (err) {
-      return res.status(401).send({ message: 'Unauthorized: Invalid token' })
+      return res.status(401).send({ message: 'unauthorized access' })
     }
-
     req.user = decoded
+
     next()
   })
 }
@@ -83,14 +82,18 @@ async function run () {
     })
 
     const verifyAdmin = async (req, res, next) => {
-      const email = req.decoded.email
+      const email = req.user.email
       const query = { email: email }
       const user = await userCollection.findOne(query)
-      if (user?.role !== 'admin') {
-        return res
-          .status(403)
-          .send({ error: true, message: 'forbidden message' })
+
+      if (!user) {
+        return res.status(404).send({ error: true, message: 'User not found' })
       }
+
+      if (user?.role !== 'admin') {
+        res.status(403).send({ error: true, message: 'You are not an admin' })
+      }
+
       next()
     }
 
@@ -103,19 +106,81 @@ async function run () {
       res.send(result)
     })
 
-    app.get('/users/admin/:email', async (req, res) => {
-      const email = req.params.email
-      if (email !== req.decoded.email) {
-        return res.status(403).send({ message: 'forbidden access' })
+    app.patch('/users/admin/:id', async (req, res) => {
+      const id = req.params.id
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ message: 'Invalid user ID' })
       }
-      const query = { email: email }
-      const user = await userCollection.findOne(query)
-      let admin = false
-      if (user) {
-        admin = user?.role === 'admin'
+
+      const query = { _id: new ObjectId(id) }
+
+      try {
+        const result = await userCollection.updateOne(query, {
+          $set: { role: 'admin' }
+        })
+
+        if (result.modifiedCount > 0) {
+          res.status(200).json({
+            message: 'User role updated to admin',
+            modifiedCount: result.modifiedCount
+          })
+        } else {
+          res.status(404).json({ message: 'User not found or no changes made' })
+        }
+      } catch (error) {
+        console.error('Error updating user role:', error)
+        res.status(500).json({ message: 'Internal Server Error', error })
       }
-      res.send({ admin })
     })
+
+    app.post('/users', async (req, res) => {
+      try {
+        const { displayName, email } = req.body
+        const userInfo = {
+          name: displayName,
+          email: email,
+          role: 'user'
+        }
+        const data = await userCollection.insertOne(userInfo)
+        res.send(data)
+      } catch (error) {
+        console.error('Error adding user:', error)
+        res
+          .status(500)
+          .send({ error: 'An error occurred while adding the user.' })
+      }
+    })
+
+    app.delete('/users/:id', async (req, res) => {
+      try {
+        const id = req.params.id
+        const query = { _id: new ObjectId(id) }
+        const result = await userCollection.deleteOne(query)
+        res.send(result)
+      } catch (error) {
+        console.error('Error adding user:', error)
+        res
+          .status(500)
+          .send({ error: 'An error occurred while delete the user.' })
+      }
+    })
+
+    app.get(
+      '/users/admin/:email',
+      verifyToken,
+      // verifyAdmin,
+      async (req, res) => {
+        const email = req.params.email
+        if (email !== req.user.email) {
+          res.send({ admin: false })
+        }
+        const query = { email: email }
+        const user = await userCollection.findOne(query)
+        const result = { admin: user?.role === 'admin' }
+        res.send(result)
+      }
+    )
 
     app.get('/reviews', async (req, res) => {
       try {
@@ -132,6 +197,54 @@ async function run () {
     app.get('/products', async (req, res) => {
       try {
         const data = await toysProductsCollection.find().toArray()
+        res.send(data)
+      } catch (error) {
+        console.error('Error fetching reviews:', error)
+        res
+          .status(500)
+          .send({ error: 'An error occurred while fetching reviews.' })
+      }
+    })
+    app.post('/products', async (req, res) => {
+      try {
+        const {
+          name,
+          image,
+          price,
+          reviews,
+          stars,
+          description,
+          category,
+          features
+        } = req.body
+        const newProduct = {
+          name,
+          image,
+          price,
+          reviews,
+          stars,
+          description,
+          category,
+          features
+        }
+        const result = await toysProductsCollection.insertOne(newProduct)
+        res.status(201).send({
+          message: 'Product added successfully',
+          productId: result.insertedId
+        })
+      } catch (error) {
+        console.error('Error adding product:', error)
+        res
+          .status(500)
+          .send({ error: 'An error occurred while adding the item.' })
+      }
+    })
+
+    app.delete('/products/:id', async (req, res) => {
+      try {
+        const id = req.params.id
+        const query = { _id: new ObjectId(id) }
+        const data = await toysProductsCollection.deleteOne(query)
         res.send(data)
       } catch (error) {
         console.error('Error fetching reviews:', error)
@@ -168,17 +281,15 @@ async function run () {
       }
     })
 
-    // Add item to wish list
     app.post('/wishList', async (req, res) => {
       try {
-        const { userId, toyId } = req.body // Expect userId and toyId in the request body
+        const { userId, toyId } = req.body
         if (!userId || !toyId) {
           return res
             .status(400)
             .send({ error: 'userId and toyId are required.' })
         }
 
-        // Check if the item is already in the wishlist
         const existingItem = await toysWishListCollection.findOne({
           userId,
           toyId
@@ -187,7 +298,6 @@ async function run () {
           return res.status(400).send({ error: 'Item already in wishlist.' })
         }
 
-        // Add the item to the wishlist
         const data = await toysWishListCollection.insertOne({ userId, toyId })
         res.send(data)
       } catch (error) {
@@ -198,7 +308,6 @@ async function run () {
       }
     })
 
-    // Delete item from wish list by userId and toyId
     app.delete('/wishList', async (req, res) => {
       try {
         const { userId, toyId } = req.query // Expect userId and toyId as query parameters
@@ -247,14 +356,14 @@ async function run () {
         if (!userId || !toyId || !name || !image || !price || !quantity) {
           return res.status(400).send({ error: 'All fields are required.' })
         }
-        const existingItem = await toysCartCollection.findOne({
-          userId,
-          toyId
-        })
+        // const existingItem = await toysCartCollection.findOne({
+        //   userId,
+        //   toyId
+        // })
 
-        if (existingItem) {
-          return res.status(400).send({ error: 'Item already in cart.' })
-        }
+        // if (existingItem) {
+        //   return res.status(400).send({ error: 'Item already in cart.' })
+        // }
         const cartItem = {
           userId,
           toyId,
@@ -297,6 +406,45 @@ async function run () {
         res
           .status(500)
           .send({ error: 'An error occurred while fetching reviews.' })
+      }
+    })
+
+    app.get('/blog/:id', (req, res) => {
+      const id = req.params.id
+      console.log(id)
+    })
+
+    app.put('/blogs/:id', async (req, res) => {
+      const { id } = req.params
+      const newId = { _id: new ObjectId(id) }
+      const { author, title, image, readTime, publishDate, content } = req.body
+      try {
+        const updatedBlog = await toysBlogsCollection.updateOne(newId, [
+          {
+            $set: {
+              author,
+              title,
+              image,
+              readTime,
+              publishDate,
+              content
+            }
+          },
+          {
+            $set: {
+              updatedAt: new Date()
+            }
+          }
+        ])
+        if (updatedBlog.modifiedCount === 0) {
+          return res
+            .status(404)
+            .send({ message: 'Blog not found or no changes made' })
+        }
+        res.status(200).send({ message: 'Blog updated successfully' })
+      } catch (err) {
+        console.error(err)
+        res.status(500).send({ message: 'Failed to update blog' })
       }
     })
 
@@ -346,7 +494,6 @@ async function run () {
       res.send({ paymentResult, deleteResult })
     })
   } finally {
-    // await client.close();
   }
 }
 run().catch(console.dir)
