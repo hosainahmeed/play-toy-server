@@ -12,7 +12,11 @@ const port = process.env.PORT || 5000
 // Middleware
 app.use(
   cors({
-    origin: ['http://localhost:5173'],
+    origin: [
+      // 'http://localhost:5173',
+      'https://playtoy-1c00b.web.app',
+      'https://playtoy-1c00b.firebaseapp.com'
+    ],
     credentials: true
   })
 )
@@ -48,9 +52,6 @@ async function run () {
   try {
     await client.connect()
     await client.db('admin').command({ ping: 1 })
-    console.log(
-      'Pinged your deployment. You successfully connected to MongoDB!'
-    )
     const toysReviewsCollection = client.db('Toys').collection('reviews')
     const toysProductsCollection = client.db('Toys').collection('products')
     const toysWishListCollection = client.db('Toys').collection('wishList')
@@ -335,19 +336,20 @@ async function run () {
       }
     })
 
-    app.get('/cart', async (req, res) => {
+    app.get('/cart/:email', async (req, res) => {
       try {
-        const { userId } = req.query
-        const query = userId ? { userId } : {}
+        const email = req.params.email
+        const query = { userId: email }
         const data = await toysCartCollection.find(query).toArray()
         res.send(data)
       } catch (error) {
-        console.error('Error fetching wishlist:', error)
+        console.error('Error fetching cart data:', error)
         res
           .status(500)
           .send({ error: 'An error occurred while fetching the wishlist.' })
       }
     })
+
     app.post('/cart', async (req, res) => {
       try {
         const { userId, toyId, name, image, price, category, quantity } =
@@ -411,7 +413,9 @@ async function run () {
 
     app.get('/blog/:id', (req, res) => {
       const id = req.params.id
-      console.log(id)
+      const query = { _id: new ObjectId(id) }
+      const result = toysBlogsCollection.find(query).toArray()
+      res.send(result)
     })
 
     app.put('/blogs/:id', async (req, res) => {
@@ -475,11 +479,23 @@ async function run () {
         })
       }
     })
-
     app.get('/payments/:email', async (req, res) => {
-      const query = { email: req.params.email }
-      const result = await toysPaymentCollection.find(query).toArray()
-      res.send(result)
+      try {
+        const { email } = req.params
+        const query = { email: email }
+        const result = await toysPaymentCollection.find(query).toArray()
+        if (result.length === 0) {
+          return res
+            .status(404)
+            .json({ message: 'No payments found for this email.' })
+        }
+        res.json(result)
+      } catch (error) {
+        console.error('Error fetching payments:', error)
+        res
+          .status(500)
+          .json({ message: 'Server error. Please try again later.' })
+      }
     })
 
     app.post('/payments', async (req, res) => {
