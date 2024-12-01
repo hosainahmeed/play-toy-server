@@ -68,7 +68,8 @@ async function run () {
         })
         const cookieOptions = {
           httpOnly: true,
-          secure: false
+          secure: false,
+          sameSite: 'none'
         }
         res
           .cookie('token', token, cookieOptions)
@@ -83,7 +84,7 @@ async function run () {
     })
 
     const verifyAdmin = async (req, res, next) => {
-      const email = req.user.email 
+      const email = req.user.email
       const query = { email: email }
       const user = await userCollection.findOne(query)
 
@@ -92,7 +93,9 @@ async function run () {
       }
 
       if (user?.role !== 'admin') {
-        return res.status(404).send({ error: true, message: 'You are not an admin' })
+        return res
+          .status(404)
+          .send({ error: true, message: 'You are not an admin' })
       }
 
       next()
