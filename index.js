@@ -102,7 +102,7 @@ async function run () {
       res.send('welcome')
     })
 
-    app.get('/users', async (req, res) => {
+    app.get('/users',verifyAdmin, async (req, res) => {
       const result = await userCollection.find().toArray()
       res.send(result)
     })
