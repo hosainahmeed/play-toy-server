@@ -50,8 +50,8 @@ const client = new MongoClient(uri, {
 
 async function run () {
   try {
-    await client.connect()
-    await client.db('admin').command({ ping: 1 })
+    // await client.connect()
+    // await client.db('admin').command({ ping: 1 })
     const toysReviewsCollection = client.db('Toys').collection('reviews')
     const toysProductsCollection = client.db('Toys').collection('products')
     const toysWishListCollection = client.db('Toys').collection('wishList')
