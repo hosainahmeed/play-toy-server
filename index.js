@@ -170,7 +170,7 @@ async function run () {
     app.get(
       '/users/admin/:email',
       verifyToken,
-      // verifyAdmin,
+      verifyAdmin,
       async (req, res) => {
         const email = req.params.email
         if (email !== req.user.email) {
