@@ -94,7 +94,7 @@ async function run () {
 
       if (user?.role !== 'admin') {
         return res
-          .status(404)
+          .status(403)
           .send({ error: true, message: 'You are not an admin' })
       }
 
