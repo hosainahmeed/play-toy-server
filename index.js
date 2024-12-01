@@ -50,7 +50,7 @@ const client = new MongoClient(uri, {
 
 async function run () {
   try {
-    // await client.connect()
+    await client.connect()
     // await client.db('admin').command({ ping: 1 })
     const toysReviewsCollection = client.db('Toys').collection('reviews')
     const toysProductsCollection = client.db('Toys').collection('products')
@@ -339,6 +339,7 @@ async function run () {
     app.get('/cart/:email', async (req, res) => {
       try {
         const email = req.params.email
+        console.log(email)
         const query = { userId: email }
         const data = await toysCartCollection.find(query).toArray()
         res.send(data)
